@@ -3,10 +3,8 @@ const admin = require('firebase-admin');
 if (!admin.apps.length) {
   let credential;
   if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-    // Production: Render / GitHub Actions
     credential = admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT));
   } else {
-    // Local development
     credential = admin.credential.cert(require('../serviceAccountKey.json'));
   }
   admin.initializeApp({ credential });
@@ -18,6 +16,8 @@ const DEFAULT_SETTINGS = {
   intervalMinutes: 60,
   maxVideos: 30,
   viewThreshold: 10000,
+  remindMinutes: 0, // 0 = tắt nhắc. VD: 30 = nhắc video chưa xem mỗi 30 phút
+  lastRemindAt: null,
 };
 
 async function loadUser(chatId) {
@@ -33,7 +33,13 @@ async function loadUser(chatId) {
     await docRef.set(newData);
     return newData;
   }
-  return doc.data();
+
+  const data = doc.data();
+  // Đảm bảo settings đủ field mới
+  data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+  if (!data.seenVideos) data.seenVideos = {};
+  if (!data.pages) data.pages = [];
+  return data;
 }
 
 async function saveUser(chatId, userData) {
@@ -44,7 +50,9 @@ async function getAllUsers() {
   const snapshot = await db.collection('users').get();
   const users = {};
   snapshot.forEach((doc) => {
-    users[doc.id] = doc.data();
+    const data = doc.data();
+    data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
+    users[doc.id] = data;
   });
   return users;
 }

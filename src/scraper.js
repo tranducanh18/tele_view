@@ -103,8 +103,9 @@ function getStorageState() {
  * Local: hiện Chrome. Cloud: headless.
  */
 async function scrapePageVideos(pageUrl, maxVideos = 30, options = {}) {
-  const isLocal = !process.env.RENDER && !process.env.GITHUB_ACTIONS;
+  // Mặc định ẩn Chrome. Muốn hiện: scrapePageVideos(url, limit, { headless: false })
   const { headless = true } = options;
+
   const storageState = getStorageState();
   const hasSession = !!storageState;
 
@@ -278,11 +279,6 @@ async function scrapePageVideos(pageUrl, maxVideos = 30, options = {}) {
           link: v.link,
         }))
       );
-    }
-
-    if (!headless) {
-      console.log('Đang giữ Chrome 4 giây để bạn xem...');
-      await page.waitForTimeout(4000);
     }
 
     return videos;
