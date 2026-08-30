@@ -6,6 +6,10 @@ function countUnseen(data) {
   return Object.values(data.seenVideos || {}).filter((v) => v.notified && !v.userSeen).length;
 }
 
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
 async function checkOnePage(bot, chatId, pageIndex) {
   const data = await loadUser(chatId);
   if (pageIndex >= data.pages.length) return 0;
@@ -83,7 +87,7 @@ async function checkOnePage(bot, chatId, pageIndex) {
 }
 
 /**
- * Check tất cả page song song + gửi tin tóm tắt + nhắc unseen nếu đến giờ
+ * Check tuần tự: 1 page xong → nghỉ 1s → page tiếp
  */
 async function checkAllPagesForUser(bot, chatId, options = {}) {
   const { sendSummary = true } = options;
@@ -93,10 +97,14 @@ async function checkAllPagesForUser(bot, chatId, options = {}) {
     return { newNotified: 0, unseen: 0 };
   }
 
-  const counts = await Promise.all(
-    data.pages.map((_, i) => checkOnePage(bot, chatId, i))
-  );
-  const newNotified = counts.reduce((a, b) => a + b, 0);
+  let newNotified = 0;
+  for (let i = 0; i < data.pages.length; i++) {
+    newNotified += await checkOnePage(bot, chatId, i);
+    // Cách nhau 1 giây giữa các page
+    if (i < data.pages.length - 1) {
+      await sleep(1000);
+    }
+  }
 
   const after = await loadUser(chatId);
   const unseen = countUnseen(after);
@@ -107,16 +115,11 @@ async function checkAllPagesForUser(bot, chatId, options = {}) {
     await bot.sendMessage(chatId, text).catch(() => {});
   }
 
-  // Nhắc lại video chưa xem theo mốc remindMinutes
   await maybeSendRemind(bot, chatId);
 
   return { newNotified, unseen };
 }
 
-/**
- * Nếu user bật remind (remindMinutes > 0) và còn video chưa xem
- * và đã đủ thời gian từ lần nhắc trước → gửi danh sách unseen
- */
 async function maybeSendRemind(bot, chatId) {
   const data = await loadUser(chatId);
   const minutes = Number(data.settings.remindMinutes) || 0;
@@ -131,7 +134,6 @@ async function maybeSendRemind(bot, chatId) {
   const now = Date.now();
   if (now - last < minutes * 60 * 1000) return;
 
-  // Gửi nhắc
   const sorted = unseenEntries.sort((a, b) => (b[1].lastViews || 0) - (a[1].lastViews || 0));
   let chunk = `⏰ Nhắc: còn ${sorted.length} video chưa xem\n\n`;
   for (let i = 0; i < sorted.length; i++) {
