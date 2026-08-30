@@ -1,0 +1,7 @@
+node_modules/
+data/
+.env
+serviceAccountKey.json
+fb-storage.json
+*.log
+.DS_Store
