@@ -10,6 +10,46 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function parseThresholdInput(text) {
+  const raw = String(text || '').trim();
+  const kMatch = raw.match(/^([\d.,]+)\s*k$/i);
+  if (kMatch) {
+    return Math.round(parseFloat(kMatch[1].replace(',', '.')) * 1000);
+  }
+  const n = parseInt(raw.replace(/[.,]/g, ''), 10);
+  return isNaN(n) ? null : n;
+}
+
+async function sendVideoNotify(bot, chatId, v, views, key, tier) {
+  const viewDisplay = v.view || views.toLocaleString('vi-VN');
+  const dateDisplay = v.date || 'không rõ';
+  const title =
+    tier === 2
+      ? `🚀 VIDEO VƯỢT MỐC 2 🚀`
+      : `🔥 VIDEO VƯỢT NGƯỠNG 🔥`;
+  const tierLabel = tier === 2 ? 'Mốc 2' : 'Mốc 1';
+
+  await bot.sendMessage(
+    chatId,
+    `${title}\n\n` +
+      `📌 ${tierLabel}\n` +
+      `👁 View: ${viewDisplay} (${views.toLocaleString('vi-VN')})\n` +
+      `🕒 ${dateDisplay}\n` +
+      `🆔 ${v.id || '—'}\n` +
+      `🔗 ${v.link}`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Đã xem', callback_data: `seen:${key}` },
+            { text: '▶️ Mở video', url: v.link },
+          ],
+        ],
+      },
+    }
+  );
+}
+
 async function checkOnePage(bot, chatId, pageIndex) {
   const data = await loadUser(chatId);
   if (pageIndex >= data.pages.length) return 0;
@@ -24,6 +64,8 @@ async function checkOnePage(bot, chatId, pageIndex) {
     const videos = await scrapePageVideos(videosUrl, data.settings.maxVideos);
 
     const fresh = await loadUser(chatId);
+    const th1 = Number(fresh.settings.viewThreshold) || 0;
+    const th2 = Number(fresh.settings.viewThreshold2) || 0;
     let notifiedCount = 0;
 
     for (const v of videos) {
@@ -39,34 +81,25 @@ async function checkOnePage(bot, chatId, pageIndex) {
       const seen = fresh.seenVideos[key] || {
         lastViews: 0,
         notified: false,
+        notified2: false,
         userSeen: false,
       };
-      const shouldNotify = views >= fresh.settings.viewThreshold && !seen.notified;
 
-      if (shouldNotify) {
-        const viewDisplay = v.view || views.toLocaleString('vi-VN');
-        const dateDisplay = v.date || 'không rõ';
-
-        await bot.sendMessage(
-          chatId,
-          `🔥 VIDEO VƯỢT NGƯỠNG 🔥\n\n` +
-            `👁 View: ${viewDisplay} (${views.toLocaleString('vi-VN')})\n` +
-            `🕒 ${dateDisplay}\n` +
-            `🆔 ${v.id || '—'}\n` +
-            `🔗 ${v.link}`,
-          {
-            reply_markup: {
-              inline_keyboard: [
-                [
-                  { text: '✅ Đã xem', callback_data: `seen:${key}` },
-                  { text: '▶️ Mở video', url: v.link },
-                ],
-              ],
-            },
-          }
-        );
+      // Mốc 1
+      if (th1 > 0 && views >= th1 && !seen.notified) {
+        await sendVideoNotify(bot, chatId, v, views, key, 1);
         seen.notified = true;
         seen.userSeen = false;
+        notifiedCount++;
+      }
+
+      // Mốc 2 (chỉ khi bật và cao hơn mốc 1)
+      if (th2 > 0 && views >= th2 && !seen.notified2) {
+        await sendVideoNotify(bot, chatId, v, views, key, 2);
+        seen.notified2 = true;
+        // Báo lại lần 2 → coi như chưa xem lại (để /unseen hiện)
+        seen.userSeen = false;
+        if (!seen.notified) seen.notified = true;
         notifiedCount++;
       }
 
@@ -74,6 +107,7 @@ async function checkOnePage(bot, chatId, pageIndex) {
       seen.lastChecked = new Date().toISOString();
       seen.link = v.link;
       if (seen.userSeen === undefined) seen.userSeen = false;
+      if (seen.notified2 === undefined) seen.notified2 = false;
       fresh.seenVideos[key] = seen;
     }
 
@@ -100,7 +134,6 @@ async function checkAllPagesForUser(bot, chatId, options = {}) {
   let newNotified = 0;
   for (let i = 0; i < data.pages.length; i++) {
     newNotified += await checkOnePage(bot, chatId, i);
-    // Cách nhau 1 giây giữa các page
     if (i < data.pages.length - 1) {
       await sleep(1000);
     }
@@ -154,4 +187,10 @@ async function maybeSendRemind(bot, chatId) {
   console.log(`⏰ Đã nhắc user ${chatId}: ${sorted.length} unseen`);
 }
 
-module.exports = { checkOnePage, checkAllPagesForUser, maybeSendRemind, countUnseen };
+module.exports = {
+  checkOnePage,
+  checkAllPagesForUser,
+  maybeSendRemind,
+  countUnseen,
+  parseThresholdInput,
+};

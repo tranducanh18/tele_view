@@ -10,13 +10,15 @@ function formatStatus(data) {
   const notified = Object.values(seenVideos).filter((v) => v.notified).length;
   const unseen = Object.values(seenVideos).filter((v) => v.notified && !v.userSeen).length;
   const remind = data.settings.remindMinutes || 0;
+  const th2 = Number(data.settings.viewThreshold2) || 0;
 
   return (
     `📊 Cấu hình của bạn:\n` +
     `• Số page: ${data.pages.length}\n` +
     `• Tần suất check: ${data.settings.intervalMinutes} phút\n` +
     `• Số video/page: ${data.settings.maxVideos}\n` +
-    `• Ngưỡng báo: ${data.settings.viewThreshold.toLocaleString('vi-VN')} view\n` +
+    `• Ngưỡng mốc 1: ${data.settings.viewThreshold.toLocaleString('vi-VN')} view\n` +
+    `• Ngưỡng mốc 2: ${th2 > 0 ? th2.toLocaleString('vi-VN') + ' view' : 'tắt'}\n` +
     `• Nhắc chưa xem: ${remind > 0 ? `mỗi ${remind} phút` : 'tắt'}\n` +
     `• Đã báo / Chưa xem: ${notified} / ${unseen}`
   );
@@ -36,7 +38,8 @@ function createBot(token) {
     { command: 'markallseen', description: '✅ Đánh dấu tất cả đã xem' },
     { command: 'status', description: '📊 Xem cấu hình' },
     { command: 'setinterval', description: '⏰ Đổi tần suất check' },
-    { command: 'setthreshold', description: '⚡ Đổi ngưỡng view' },
+    { command: 'setthreshold', description: '⚡ Ngưỡng mốc 1 (lần đầu báo)' },
+    { command: 'setthreshold2', description: '🚀 Ngưỡng mốc 2 (báo lại)' },
     { command: 'setlimit', description: '📹 Số video mỗi page' },
     { command: 'removepage', description: '🗑️ Xóa 1 page' },
     { command: 'clearpages', description: '🗑️🗑️ Xóa TẤT CẢ page' },
@@ -101,7 +104,7 @@ function createBot(token) {
     pendingInput.delete(chatId);
 
     try {
-      if (pending.type === 'threshold') {
+      if (pending.type === 'threshold' || pending.type === 'threshold2') {
         let threshold;
         const kMatch = text.match(/^([\d.,]+)\s*k$/i);
         if (kMatch) {
@@ -109,13 +112,26 @@ function createBot(token) {
         } else {
           threshold = parseInt(text.replace(/[.,]/g, ''), 10);
         }
+        // mốc 2 cho phép 0 = tắt
+        if (pending.type === 'threshold2') {
+          if (isNaN(threshold) || threshold < 0) {
+            return bot.sendMessage(chatId, '❌ Số không hợp lệ. Ví dụ: 30k hoặc 0 (tắt)\nGõ /setthreshold2 để thử lại.');
+          }
+          const data = await loadUser(chatId);
+          data.settings.viewThreshold2 = threshold;
+          await saveUser(chatId, data);
+          if (threshold === 0) {
+            return bot.sendMessage(chatId, '🔕 Đã tắt ngưỡng mốc 2.');
+          }
+          return bot.sendMessage(chatId, `🚀 Ngưỡng mốc 2: ${threshold.toLocaleString('vi-VN')} view\n(Video đã báo mốc 1 sẽ được báo lại khi đạt mốc này)`);
+        }
         if (!threshold || isNaN(threshold)) {
-          return bot.sendMessage(chatId, '❌ Số không hợp lệ. Ví dụ: 10000 hoặc 10k\nGõ /setthreshold để thử lại.');
+          return bot.sendMessage(chatId, '❌ Số không hợp lệ. Ví dụ: 5000 hoặc 5k\nGõ /setthreshold để thử lại.');
         }
         const data = await loadUser(chatId);
         data.settings.viewThreshold = threshold;
         await saveUser(chatId, data);
-        return bot.sendMessage(chatId, `⚡ Ngưỡng báo: ${threshold.toLocaleString('vi-VN')} view`);
+        return bot.sendMessage(chatId, `⚡ Ngưỡng mốc 1: ${threshold.toLocaleString('vi-VN')} view`);
       }
 
       if (pending.type === 'interval') {
@@ -330,15 +346,53 @@ function createBot(token) {
         threshold = parseInt(raw.replace(/[.,]/g, ''), 10);
       }
       if (!threshold || isNaN(threshold)) {
-        return bot.sendMessage(chatId, 'Số không hợp lệ. Ví dụ: 10000 hoặc 10k');
+        return bot.sendMessage(chatId, 'Số không hợp lệ. Ví dụ: 5000 hoặc 5k');
       }
       const data = await loadUser(chatId);
       data.settings.viewThreshold = threshold;
       await saveUser(chatId, data);
-      return bot.sendMessage(chatId, `⚡ Ngưỡng báo: ${threshold.toLocaleString('vi-VN')} view`);
+      return bot.sendMessage(chatId, `⚡ Ngưỡng mốc 1: ${threshold.toLocaleString('vi-VN')} view`);
     }
     pendingInput.set(chatId, { type: 'threshold' });
-    bot.sendMessage(chatId, '⚡ Nhập ngưỡng view:\nVí dụ: 5000 hoặc 10k');
+    bot.sendMessage(chatId, '⚡ Nhập ngưỡng mốc 1 (lần đầu báo):\nVí dụ: 5000 hoặc 5k');
+  });
+
+  // /setthreshold2 — mốc 2 (báo lại)
+  bot.onText(/\/setthreshold2(?:\s+(.+))?$/, async (msg, match) => {
+    const chatId = msg.chat.id;
+    const raw = (match[1] || '').trim();
+    if (raw) {
+      let threshold;
+      const kMatch = raw.match(/^([\d.,]+)\s*k$/i);
+      if (kMatch) {
+        threshold = Math.round(parseFloat(kMatch[1].replace(',', '.')) * 1000);
+      } else {
+        threshold = parseInt(raw.replace(/[.,]/g, ''), 10);
+      }
+      if (isNaN(threshold) || threshold < 0) {
+        return bot.sendMessage(chatId, 'Số không hợp lệ. Ví dụ: 30000 hoặc 30k hoặc 0 (tắt)');
+      }
+      const data = await loadUser(chatId);
+      data.settings.viewThreshold2 = threshold;
+      await saveUser(chatId, data);
+      if (threshold === 0) {
+        return bot.sendMessage(chatId, '🔕 Đã tắt ngưỡng mốc 2.');
+      }
+      return bot.sendMessage(
+        chatId,
+        `🚀 Ngưỡng mốc 2: ${threshold.toLocaleString('vi-VN')} view\n` +
+          `(Video đã báo mốc 1 sẽ được báo lại khi đạt mốc này)`
+      );
+    }
+    const data = await loadUser(chatId);
+    const current = Number(data.settings.viewThreshold2) || 0;
+    pendingInput.set(chatId, { type: 'threshold2' });
+    bot.sendMessage(
+      chatId,
+      `🚀 Ngưỡng mốc 2 (báo lại)\n` +
+        `Hiện tại: ${current > 0 ? current.toLocaleString('vi-VN') + ' view' : 'tắt'}\n\n` +
+        `Nhập số (0 = tắt):\nVí dụ: 30k`
+    );
   });
 
   // /remind  hoặc  /remind 30

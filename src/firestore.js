@@ -15,8 +15,9 @@ const db = admin.firestore();
 const DEFAULT_SETTINGS = {
   intervalMinutes: 60,
   maxVideos: 30,
-  viewThreshold: 10000,
-  remindMinutes: 0, // 0 = tắt nhắc. VD: 30 = nhắc video chưa xem mỗi 30 phút
+  viewThreshold: 10000,   // mốc 1 (lần đầu báo)
+  viewThreshold2: 0,      // mốc 2 (lần 2 báo). 0 = tắt
+  remindMinutes: 0,
   lastRemindAt: null,
 };
 
@@ -35,7 +36,6 @@ async function loadUser(chatId) {
   }
 
   const data = doc.data();
-  // Đảm bảo settings đủ field mới
   data.settings = { ...DEFAULT_SETTINGS, ...(data.settings || {}) };
   if (!data.seenVideos) data.seenVideos = {};
   if (!data.pages) data.pages = [];
