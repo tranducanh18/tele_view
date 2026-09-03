@@ -19,6 +19,7 @@ const DEFAULT_SETTINGS = {
   viewThreshold2: 0,      // mốc 2 (lần 2 báo). 0 = tắt
   remindMinutes: 0,
   lastRemindAt: null,
+  lastCheckedAt: null,    // lần check gần nhất (dùng cho cron)
 };
 
 async function loadUser(chatId) {
